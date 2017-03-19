@@ -1,0 +1,124 @@
+# Practical Mach. Learning - Course Project
+### Rodney Slagle
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r message=FALSE}
+library(caret)
+library(rattle)
+library(rpart.plot)
+library(randomForest)
+```
+
+## Executive Summary
+
+This analysis is for the Coursera Practical Machine Learning Course Project.  The data is from Human Activity Recognition (HAR) research, and more information on this effort can be found at: http://groupware.les.inf.puc-rio.br/har. In brief, this project looked to explore accelerometer data collected to determine the manner in which subjects performed a weightlifting exercise.
+
+The objective of this analysis effort is to use the training dataset provided to develop a classification model that best predicts the actual outcome expressed as a variable (classe) which has five levels (A, B, C, D, or E).  The resulting model is then to be used to predict 20 observations from a testing dataset provided with its actual classification values unknown.  
+
+Some exploratory analysis resulted in the removal of 107 of the original 160 variables, mostly due to high numbers of missing values, or inappropriateness of their use in prediction.  The remaining 53 variable (classe and 52 measurements) were used for prediction modeling.
+
+Several predictive models were fit (Decision Tree, Random Forest, and Generalized Boosted Model).  The outcome of these fits resulted in selecting the Random Forest model as the best for prediction accuracy (i.e., 1 - out of sample error).  The final Random Forest model was then used to predict the testing dataset "classe" values, and that result has been output as a text file and submitted to the course website.
+
+##Data Access and Preparation
+The data for this project was obtained from two URL links, one each for the training and testing datasets. 
+
+```{r download, eval=FALSE}
+#download files
+training_url <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(url=training_url, destfile="training.csv")
+testing_url <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(url=testing_url, destfile="testing.csv")
+```
+
+```{r read, cache=TRUE}
+#read data
+training <- read.csv("training.csv", na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv("testing.csv", na.strings=c("NA","#DIV/0!",""))
+```
+Exploratory analysis of these datasets shows that the training set has `r dim(training)[2]` columns and `r dim(training)[1]` rows, and the testing set has `r dim(testing)[2]` columns and `r dim(testing)[1]` rows.  Although the training and testing sets have the same number of columns, the training set contains the classification variable "classe", and the testing set does not, however it does have an additional column "problem_id".
+
+Further investigation of the training set revealed that a significant number of variables have very large percentage of missing values.  The graph below of percent missing values (NA) shows how this data into two distinct groups.  The group with high missing value percentage is then removed from the training dataset.
+
+```{r missing, cache=TRUE, fig.width=4, fig.height=3}
+# Explore Missing Values
+naCount <-sapply(training, function(y) sum(length(which(is.na(y)))))
+pNA <- data.frame(pNa = naCount) / nrow(training)
+hist(pNA$pNa, main="Histogram of Variable NA Percent", xlab="Percent NA")
+# Remove Columns with over 80% Missing Values
+naCount <-sapply(training, function(y) sum(length(which(is.na(y)))))
+pNA <- data.frame(pNa = naCount) / nrow(training)
+nonNARows <- subset(pNA, pNA$pNa <= .20)
+nonNACols <- rownames(nonNARows)
+nonNATraining <- training[,nonNACols]
+```
+In addition to the high percent missing values, there were seven columns that contained data that would not be appropriate for a this type of generalized prediction modeling (e.g., row number, username, date and time stamps, window data, etc.).  These are also removed from the training set.
+```{r nonsample, cache=TRUE}
+# Remove Non-Sample Values
+excludeCols <- c("X","user_name","raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp","new_window","num_window")
+#excludeCols <- c("X")
+nonNATraining <- nonNATraining [,!(names(nonNATraining) %in% excludeCols)]
+```
+With the full training dataset cleaned up for analysis, we then randomly divide it into two unique subsets, one for prediction model training (75%), and one for validation (25%) analysis.
+```{r divide, cache=TRUE}
+# Divide into Training and Validation Sets
+set.seed(123)
+inTrain = createDataPartition(nonNATraining$classe , p = .75, list=FALSE)
+trainingSet = nonNATraining[inTrain,]
+validationSet = nonNATraining[-inTrain,]
+```
+
+## Model Fits
+To explore the results of different methods, three predictive models were fit using the reduced training dataset (75% of the original training dataset rows, and 53 variables). The three models fitted included: Decision Tree, Random Forest, and Generalized Boosted Model.  The results of each three models are then run against the validation dataset (25% of the original training dataset rows), and prediction accuracy percent (i.e., 1 - out of sample error) is presented.  The resulting accuracy estimates will be used to select the final model for use in predicting the testing dataset.
+
+### Decision Tree 
+The Decision Tree prediction model was run with the "rpart" function.  A graph of the decision tree output is shown.  Prediction was performed on the validation set and the resulting accuracy estimate is shown below.
+
+```{r decisionTree, cache=TRUE, warning=FALSE, fig.width=4, fig.height=3}
+# Decision Tree
+set.seed(124)
+modelFitRPart <- rpart(classe ~ ., method="class", data=trainingSet)
+fancyRpartPlot(modelFitRPart, sub="Decision Tree Results")
+predictRPart <- predict(modelFitRPart, validationSet, type="class")
+cmRPart <- confusionMatrix(predictRPart, validationSet$classe)
+cmRPart$overall['Accuracy']
+```
+
+### Random Forest
+The Random Forest prediction model was run with Resampling Cross Validation (3 fold).  Prediction was performed on the validation set and the resulting accuracy estimate is displayed below.
+```{r randomForest, cache=TRUE}
+# Random Forest
+set.seed(123)
+fitControl <- trainControl(method='cv', number = 3)
+modelFitRF <- randomForest(classe ~ ., data=trainingSet, trControl=fitControl, verbose=FALSE)
+predictRF <- predict(modelFitRF, validationSet)
+cmRF <- confusionMatrix(predictRF, validationSet$classe)
+cmRF$overall['Accuracy']
+```
+
+### Generalized Boosted Model
+The Generalized Boosted Model prediction model was run with Resampling Cross Validation (5 fold).  Prediction was performed on the validation set and the resulting accuracy estimate is shown below.
+```{r boosted, cache=TRUE, message=FALSE}
+# Boosting
+set.seed(125)
+fitControl <- trainControl(method='cv', number = 5)
+modelFitGbm <- train(classe ~ ., method="gbm", data=trainingSet, trControl=fitControl, verbose=FALSE)
+predictGbm <- predict(modelFitGbm,validationSet)
+cmGbm <- confusionMatrix(predictGbm, validationSet$classe)
+cmGbm$overall['Accuracy']
+```
+
+## Conculsions
+Reviewing the prediction accuracy for each model fit against the validation dataset, we find that the best outcome was achieved using the Random Forest model (accurcy=`r round(cmRF$overall['Accuracy'],3)`, out of sample error=`r 1-round(cmRF$overall['Accuracy'],3)`), with the Generalized Boosted Model second (accurcy=`r round(cmGbm$overall['Accuracy'],3)`, out of sample error=`r 1-round(cmGbm$overall['Accuracy'],3)`), and the Decision Tree the worst (accurcy=`r round(cmRPart$overall['Accuracy'],3)`, out of sample error=`r 1-round(cmRPart$overall['Accuracy'],3)`). 
+
+Using the Random Forest model to predict the classification values for the 20 observations of the testing dataset results in the data listed below.  That dataset is also written to a text file that has been uploaded to the course website along with this paper.
+
+```{r testOut}
+# Testing Output - Gbm
+predictTestRF <- predict(modelFitRF, testing)
+predictTestRF
+```
+```{r testOut2, eval=FALSE}
+write(toString(predictTestRF), file="predictTestRF.txt", ncolumns = 20)
+```
+####End of Report
